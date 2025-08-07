@@ -5,6 +5,7 @@ import { AgentFlow } from '@/components/AgentFlow';
 import { MemoryDashboard } from '@/components/MemoryDashboard';
 import { QuerySimulator } from '@/components/QuerySimulator';
 import { EdgeMap } from '@/components/EdgeMap';
+import { MultiAgentQueryInterface } from '@/components/MultiAgentQueryInterface';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const Index = () => {
@@ -24,7 +25,7 @@ const Index = () => {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-slate-800 border-slate-700">
+          <TabsList className="grid w-full grid-cols-6 bg-slate-800 border-slate-700">
             <TabsTrigger value="overview" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400">
               System Overview
             </TabsTrigger>
@@ -39,6 +40,9 @@ const Index = () => {
             </TabsTrigger>
             <TabsTrigger value="edgemap" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400">
               Edge Map
+            </TabsTrigger>
+            <TabsTrigger value="multiagent" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400">
+              Multi-Agent Query
             </TabsTrigger>
           </TabsList>
 
@@ -63,6 +67,10 @@ const Index = () => {
 
           <TabsContent value="edgemap">
             <EdgeMap />
+          </TabsContent>
+
+          <TabsContent value="multiagent">
+            <MultiAgentQueryInterface />
           </TabsContent>
         </Tabs>
       </div>
