@@ -1,0 +1,101 @@
+{
+  "agents": [
+    {
+      "id": "scenic-agent",
+      "name": "Scenic Agent",
+      "type": "scenic",
+      "description": "Specializes in scenic locations, viewpoints, and tourist attractions",
+      "capabilities": [
+        "location_search",
+        "scenic_recommendations",
+        "tourism_info",
+        "photography_spots"
+      ],
+      "keywords": [
+        "scenic", "beautiful", "view", "tourist", "attraction", 
+        "place", "visit", "sightseeing", "landscape", "mountain", 
+        "hill", "sunset", "sunrise", "photography"
+      ],
+      "priority": 1,
+      "enabled": true
+    },
+    {
+      "id": "river-agent",
+      "name": "River Agent",
+      "type": "river",
+      "description": "Expert in rivers, lakes, waterfalls, and aquatic activities",
+      "capabilities": [
+        "water_bodies",
+        "river_info",
+        "aquatic_activities",
+        "fishing_spots",
+        "water_sports"
+      ],
+      "keywords": [
+        "river", "water", "lake", "stream", "waterfall", 
+        "aquatic", "fishing", "boating", "swimming", "dam", 
+        "reservoir", "creek", "pond"
+      ],
+      "priority": 2,
+      "enabled": true
+    },
+    {
+      "id": "park-agent",
+      "name": "Park Agent",
+      "type": "park",
+      "description": "Handles parks, gardens, recreational areas, and outdoor activities",
+      "capabilities": [
+        "parks",
+        "recreation",
+        "outdoor_activities",
+        "facilities",
+        "family_spots"
+      ],
+      "keywords": [
+        "park", "playground", "recreation", "outdoor", "picnic", 
+        "garden", "trail", "hiking", "walking", "family", 
+        "children", "sports", "camping"
+      ],
+      "priority": 3,
+      "enabled": true
+    },
+    {
+      "id": "search-agent",
+      "name": "Search Agent",
+      "type": "search",
+      "description": "Searches through user history and provides contextual information",
+      "capabilities": [
+        "memory_search",
+        "historical_data",
+        "context_retrieval",
+        "pattern_analysis"
+      ],
+      "keywords": [
+        "past", "history", "previous", "remember", "before", 
+        "earlier", "search", "find", "show me my"
+      ],
+      "priority": 4,
+      "enabled": true
+    }
+  ],
+  "edge_rules": [
+    {
+      "from": "scenic-agent",
+      "to": "river-agent",
+      "condition": "location.type === 'water-adjacent'",
+      "priority": "high"
+    },
+    {
+      "from": "river-agent",
+      "to": "park-agent",
+      "condition": "recreational.features.includes('park')",
+      "priority": "medium"
+    },
+    {
+      "from": "search-agent",
+      "to": "*",
+      "condition": "query.type === 'historical'",
+      "priority": "high"
+    }
+  ]
+}
