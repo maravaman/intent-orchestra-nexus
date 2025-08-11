@@ -3,7 +3,7 @@ import { ScenicAgent } from '../agents/ScenicAgent.js';
 import { RiverAgent } from '../agents/RiverAgent.js';
 import { ParkAgent } from '../agents/ParkAgent.js';
 import { SearchAgent } from '../agents/SearchAgent.js';
-import agentsConfig from '../config/agents.json' assert { type: 'json' };
+import agentsConfig from '../config/agents.json\' assert { type: 'json' };
 import { v4 as uuidv4 } from 'uuid';
 
 export class LangGraphOrchestrator {
