@@ -6,23 +6,55 @@ import { MemoryManager } from '../services/MemoryManager.js';
 const router = express.Router();
 
 // Initialize services (these will be injected by the main server)
-let orchestrator, userService, memoryManager;
+let orchestrator, userService, memoryManager, ollamaService;
 
 export const initializeServices = (services) => {
   orchestrator = services.orchestrator;
   userService = services.userService;
   memoryManager = services.memoryManager;
+  ollamaService = services.ollamaService;
 };
 
 // Health check endpoint
 router.get('/health', (req, res) => {
+  const ollamaHealth = ollamaService ? ollamaService.isHealthy() : false;
+  
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     services: {
       orchestrator: !!orchestrator,
       userService: !!userService,
-      memoryManager: !!memoryManager
+      memoryManager: !!memoryManager,
+      ollama: ollamaHealth
+    },
+    ollama: ollamaService ? ollamaService.getModelInfo() : null
+  });
+});
+
+// Ollama status endpoint
+router.get('/ollama/status', async (req, res) => {
+  try {
+    if (!ollamaService) {
+      return res.status(503).json({
+        error: 'Ollama service not initialized'
+      });
+    }
+
+    const isHealthy = await ollamaService.isHealthy();
+    const modelInfo = ollamaService.getModelInfo();
+
+    res.json({
+      success: true,
+      healthy: isHealthy,
+      model: modelInfo
+    });
+  } catch (error) {
+    console.error('[API] Ollama status error:', error);
+    res.status(500).json({
+      error: 'Failed to check Ollama status',
+      message: error.message
+    });
     }
   });
 });

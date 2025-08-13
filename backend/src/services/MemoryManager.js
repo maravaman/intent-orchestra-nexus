@@ -1,47 +1,96 @@
 import { v4 as uuidv4 } from 'uuid';
 
 export class MemoryManager {
-  constructor(redisClient, mysqlConnection) {
-    this.redis = redisClient;
+  constructor(mysqlConnection) {
     this.mysql = mysqlConnection;
-    this.STM_EXPIRY = 7 * 24 * 60 * 60; // 7 days in seconds
   }
 
-  // STM Operations (Redis)
-  async storeInSTM(userId, entry) {
+  // Store in MySQL with TTL simulation
+  async storeInMemory(userId, entry, isShortTerm = true) {
     try {
       const memoryEntry = {
         id: uuidv4(),
-        userId,
-        ...entry,
-        timestamp: new Date().toISOString()
+        user_id: userId,
+        session_id: entry.sessionId,
+        type: entry.type,
+        content: entry.content,
+        metadata: JSON.stringify(entry.metadata || {}),
+        agent_id: entry.agentId || null,
+        relevance_score: entry.relevanceScore || 0,
+        timestamp: new Date()
       };
 
-      const key = `stm:${userId}`;
-      await this.redis.lPush(key, JSON.stringify(memoryEntry));
-      await this.redis.expire(key, this.STM_EXPIRY);
-      
-      // Keep only last 100 entries per user
-      await this.redis.lTrim(key, 0, 99);
-      
-      console.log(`[STM] Stored entry for user ${userId}`);
+      await this.mysql.execute(
+        'INSERT INTO memory_entries (id, user_id, session_id, type, content, metadata, agent_id, relevance_score, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [memoryEntry.id, memoryEntry.user_id, memoryEntry.session_id, memoryEntry.type, memoryEntry.content, memoryEntry.metadata, memoryEntry.agent_id, memoryEntry.relevance_score, memoryEntry.timestamp]
+      );
+
+      // Clean old short-term entries (older than 7 days)
+      if (isShortTerm) {
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        await this.mysql.execute(
+          'DELETE FROM memory_entries WHERE user_id = ? AND type IN ("query", "response") AND timestamp < ?',
+          [userId, sevenDaysAgo]
+        );
+      }
+
+      console.log(`[MEMORY] Stored ${isShortTerm ? 'STM' : 'LTM'} entry for user ${userId}`);
       return memoryEntry;
     } catch (error) {
-      console.error('[STM] Storage error:', error);
+      console.error('[MEMORY] Storage error:', error);
       throw error;
     }
   }
 
-  async getFromSTM(userId, limit = 20) {
+  // Legacy method for compatibility
+  async storeInSTM(userId, entry) {
+    return this.storeInMemory(userId, entry, true);
+  }
+
+  async storeInLTM(userId, entry) {
+    return this.storeInMemory(userId, entry, false);
+  }
+
+  async getFromMemory(userId, limit = 20, type = null) {
     try {
-      const key = `stm:${userId}`;
-      const entries = await this.redis.lRange(key, 0, limit - 1);
+      let query = 'SELECT * FROM memory_entries WHERE user_id = ?';
+      const params = [userId];
       
-      return entries.map(entry => JSON.parse(entry));
+      if (type) {
+        query += ' AND type = ?';
+        params.push(type);
+      }
+      
+      query += ' ORDER BY timestamp DESC LIMIT ?';
+      params.push(limit);
+
+      const [rows] = await this.mysql.execute(query, params);
+      
+      return rows.map(row => ({
+        ...entry,
+        id: row.id,
+        userId: row.user_id,
+        sessionId: row.session_id,
+        type: row.type,
+        content: row.content,
+        metadata: JSON.parse(row.metadata || '{}'),
+        agentId: row.agent_id,
+        relevanceScore: row.relevance_score,
+        timestamp: row.timestamp
+      }));
     } catch (error) {
-      console.error('[STM] Retrieval error:', error);
+      console.error('[MEMORY] Retrieval error:', error);
       return [];
     }
+  }
+
+  // Legacy methods for compatibility
+  async getFromSTM(userId, limit = 20) {
+    return this.getFromMemory(userId, limit, 'query');
+  }
+
+  async getFromLTM(userId, limit = 50) {
+    return this.getFromMemory(userId, limit);
   }
 
   // LTM Operations (MySQL)

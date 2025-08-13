@@ -1,10 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createMySQLConnection, createRedisConnection, initializeTables } from './config/database.js';
+import { createMySQLConnection, initializeTables } from './config/database.js';
 import { MemoryManager } from './services/MemoryManager.js';
 import { UserService } from './services/UserService.js';
 import { LangGraphOrchestrator } from './services/LangGraphOrchestrator.js';
+import { OllamaService } from './services/OllamaService.js';
 import apiRoutes, { initializeServices } from './routes/api.js';
 import { 
   securityHeaders, 
@@ -23,33 +24,40 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Global variables for services
-let mysqlConnection, redisClient, memoryManager, userService, orchestrator;
+let mysqlConnection, memoryManager, userService, orchestrator, ollamaService;
 
 // Initialize database connections and services
 async function initializeApp() {
   try {
-    logInfo('🚀 Starting Multi-Agent Backend Server...');
+    logInfo('🚀 Starting Ollama Multi-Agent Backend Server...');
 
-    // Initialize database connections
-    logInfo('📊 Connecting to databases...');
+    // Initialize Ollama service
+    logInfo('🤖 Initializing Ollama service...');
+    ollamaService = new OllamaService();
+    await ollamaService.initialize();
+
+    // Initialize database connection
+    logInfo('📊 Connecting to MySQL database...');
     mysqlConnection = await createMySQLConnection();
-    redisClient = createRedisConnection();
-    await redisClient.connect();
 
     // Initialize database tables
     await initializeTables(mysqlConnection);
 
     // Initialize services
     logInfo('🔧 Initializing services...');
-    memoryManager = new MemoryManager(redisClient, mysqlConnection);
+    memoryManager = new MemoryManager(mysqlConnection);
     userService = new UserService(mysqlConnection, memoryManager);
     orchestrator = new LangGraphOrchestrator(memoryManager);
+    
+    // Initialize orchestrator
+    await orchestrator.initialize();
 
     // Initialize API routes with services
     initializeServices({
       orchestrator,
       userService,
-      memoryManager
+      memoryManager,
+      ollamaService
     });
 
     logInfo('✅ All services initialized successfully');

@@ -1,52 +1,89 @@
 import { BaseAgent } from './BaseAgent.js';
 
 export class SearchAgent extends BaseAgent {
-  async generateResponse(query, context) {
+  getDefaultSystemPrompt() {
+    return `You are the Search Agent, a specialized AI assistant focused on searching through user conversation history and providing contextual information.
+
+Your expertise includes:
+- Analyzing user conversation patterns
+- Finding relevant historical information
+- Providing personalized recommendations based on history
+- Identifying user preferences and interests
+- Connecting past conversations to current queries
+
+When responding to search-related queries:
+1. Reference specific past conversations when available
+2. Identify patterns in user interests
+3. Provide personalized recommendations
+4. Explain connections between past and current queries
+5. Suggest related topics based on history
+6. Maintain user privacy while being helpful
+
+Be insightful about user patterns while respecting privacy and providing valuable context.`;
+  }
+
+  async execute(query, userId, sessionId, context = []) {
     try {
       const conversationHistory = await this.memoryManager.getUserConversationHistory(
-        context.userId || 'unknown', 
+        userId, 
         10
       );
       const searchResults = await this.memoryManager.searchUserHistory(
-        context.userId || 'unknown', 
+        userId, 
         query
       );
       
-      let response = '';
-
+      let searchContext = `User has ${conversationHistory.length} previous conversations. `;
+      
       if (searchResults.length > 0) {
         const recentQueries = searchResults
           .filter(entry => entry.type === 'query')
           .slice(0, 3)
           .map(entry => entry.content);
-
-        response = `I found ${searchResults.length} relevant entries in your conversation history. Your recent related queries include: "${recentQueries.join('", "')}"`;
         
-        if (conversationHistory.length > 0) {
-          const lastQuery = conversationHistory[0];
-          response += ` Your last query was about "${lastQuery.query}" on ${new Date(lastQuery.timestamp).toLocaleDateString()}.`;
-        }
-
-        response += ` I can see patterns in your interests that might help provide more personalized recommendations.`;
-      } else if (conversationHistory.length > 0) {
-        response = `While I didn't find direct matches for your current query, I can see from your conversation history that you've made ${conversationHistory.length} previous queries. Your interests seem to focus on exploration and discovery, which aligns well with your current question.`;
-      } else {
-        response = `This appears to be one of your first queries with our system. I'm building a profile of your interests to provide better personalized recommendations in future conversations. Welcome to our multi-agent assistance platform!`;
+        searchContext += `Found ${searchResults.length} relevant entries. Recent related queries: ${recentQueries.join(', ')}. `;
       }
+      
+      if (conversationHistory.length > 0) {
+        const lastQuery = conversationHistory[0];
+        searchContext += `Last query was about "${lastQuery.query}". `;
+      }
+      
+      searchContext += `Current query: ${query}`;
 
-      // Simulate processing time
-      await new Promise(resolve => setTimeout(resolve, this.getProcessingTime()));
+      // Use Ollama to generate contextual response
+      const startTime = Date.now();
+      const ollamaResponse = await this.ollama.generateResponse(
+        this.systemPrompt,
+        searchContext,
+        context
+      );
+      
+      const executionTime = Date.now() - startTime;
+      const confidence = this.calculateConfidence(query, ollamaResponse.content);
+      const relevanceScore = this.calculateRelevanceScore(query);
+      
+      const agentResponse = {
+        agentId: this.id,
+        agentName: this.name,
+        response: ollamaResponse.content,
+        confidence: confidence,
+        executionTime: executionTime,
+        inputTokens: ollamaResponse.inputTokens,
+        outputTokens: ollamaResponse.outputTokens,
+        timestamp: new Date(),
+        relevanceScore: relevanceScore
+      };
 
-      return response;
+      // Store agent interaction
+      await this.storeAgentInteraction(query, userId, sessionId, ollamaResponse, confidence, relevanceScore);
+      
+      console.log(`[${this.name}] Response generated in ${executionTime}ms`);
+      return agentResponse;
+
     } catch (error) {
-      console.error('[SearchAgent] Error generating response:', error);
-      return "I'm currently unable to search your history, but I'm here to help with your current query. Please try again or ask about specific topics.";
+      console.error(`[${this.name}] Execution error:`, error);
+      throw error;
     }
-  }
-
-  async execute(query, userId, sessionId, context = []) {
-    // Override execute to pass userId in context for search operations
-    const enhancedContext = [...context, { userId, sessionId }];
-    return super.execute(query, userId, sessionId, enhancedContext);
   }
 }

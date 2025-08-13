@@ -1,21 +1,39 @@
-import { StateGraph, END } from 'langgraph';
+import { OllamaService } from './OllamaService.js';
 import { ScenicAgent } from '../agents/ScenicAgent.js';
 import { RiverAgent } from '../agents/RiverAgent.js';
 import { ParkAgent } from '../agents/ParkAgent.js';
 import { SearchAgent } from '../agents/SearchAgent.js';
-import agentsConfig from '../config/agents.json\' assert { type: 'json' };
+import agentsConfig from '../config/agents.json' assert { type: 'json' };
 import { v4 as uuidv4 } from 'uuid';
 
 export class LangGraphOrchestrator {
   constructor(memoryManager) {
     this.memoryManager = memoryManager;
+    this.ollamaService = new OllamaService();
     this.agents = new Map();
-    this.graph = null;
-    this.initializeAgents();
-    this.buildGraph();
+    this.initialized = false;
   }
 
-  initializeAgents() {
+  async initialize() {
+    try {
+      // Initialize Ollama service
+      await this.ollamaService.initialize();
+      
+      // Initialize agents
+      await this.initializeAgents();
+      
+      // Register agents in database
+      await this.registerAgentsInDB();
+      
+      this.initialized = true;
+      console.log('✅ LangGraph Orchestrator initialized successfully');
+    } catch (error) {
+      console.error('❌ LangGraph Orchestrator initialization failed:', error);
+      throw error;
+    }
+  }
+
+  async initializeAgents() {
     const agentClasses = {
       'scenic': ScenicAgent,
       'river': RiverAgent,
@@ -27,7 +45,7 @@ export class LangGraphOrchestrator {
       if (config.enabled) {
         const AgentClass = agentClasses[config.type];
         if (AgentClass) {
-          const agent = new AgentClass(config, this.memoryManager);
+          const agent = new AgentClass(config, this.memoryManager, this.ollamaService);
           this.agents.set(config.id, agent);
           console.log(`✅ Initialized ${config.name}`);
         }
@@ -35,67 +53,81 @@ export class LangGraphOrchestrator {
     });
   }
 
-  buildGraph() {
-    // Define the state structure
-    const graphState = {
-      query: null,
-      userId: null,
-      sessionId: null,
-      relevantAgents: [],
-      responses: [],
-      context: [],
-      executionTime: 0
-    };
-
-    // Create the state graph
-    this.graph = new StateGraph(graphState);
-
-    // Add nodes
-    this.graph.addNode('analyze_query', this.analyzeQuery.bind(this));
-    this.graph.addNode('route_agents', this.routeAgents.bind(this));
-    this.graph.addNode('execute_agents', this.executeAgents.bind(this));
-    this.graph.addNode('aggregate_responses', this.aggregateResponses.bind(this));
-
-    // Add edges
-    this.graph.addEdge('analyze_query', 'route_agents');
-    this.graph.addEdge('route_agents', 'execute_agents');
-    this.graph.addEdge('execute_agents', 'aggregate_responses');
-    this.graph.addEdge('aggregate_responses', END);
-
-    // Set entry point
-    this.graph.setEntryPoint('analyze_query');
-
-    console.log('✅ LangGraph orchestrator initialized');
+  async registerAgentsInDB() {
+    try {
+      for (const [agentId, agent] of this.agents) {
+        await this.memoryManager.mysql.execute(
+          'INSERT INTO agents (id, name, type, description, capabilities, keywords, system_prompt, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), capabilities=VALUES(capabilities), keywords=VALUES(keywords), system_prompt=VALUES(system_prompt), enabled=VALUES(enabled)',
+          [
+            agent.id,
+            agent.name,
+            agent.type,
+            agent.description,
+            JSON.stringify(agent.capabilities),
+            JSON.stringify(agent.keywords),
+            agent.systemPrompt,
+            agent.enabled
+          ]
+        );
+      }
+      console.log('✅ Agents registered in database');
+    } catch (error) {
+      console.error('❌ Failed to register agents in database:', error);
+    }
   }
 
-  async analyzeQuery(state) {
-    console.log(`[ORCHESTRATOR] Analyzing query: "${state.query}"`);
+  async processQuery(query, userId, sessionId) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    try {
+      console.log(`[ORCHESTRATOR] Processing query for user ${userId}: "${query}"`);
+      
+      const startTime = Date.now();
+      
+      // Step 1: Analyze query and get context
+      const context = await this.analyzeQuery(query, userId);
+      
+      // Step 2: Route to relevant agents
+      const relevantAgents = await this.routeAgents(query);
+      
+      // Step 3: Execute agents in parallel
+      const responses = await this.executeAgents(relevantAgents, query, userId, sessionId, context);
+      
+      // Step 4: Aggregate and store results
+      const queryResult = await this.aggregateResponses(query, userId, sessionId, responses, startTime);
+      
+      return queryResult;
+    } catch (error) {
+      console.error('[ORCHESTRATOR] Query processing error:', error);
+      throw error;
+    }
+  }
+
+  async analyzeQuery(query, userId) {
+    console.log(`[ORCHESTRATOR] Analyzing query: "${query}"`);
     
     // Extract context and keywords from query
     const queryLower = state.query.toLowerCase();
     const keywords = queryLower.split(' ').filter(word => word.length > 2);
     
     // Get user context from memory
-    const context = await this.memoryManager.getRelevantContext(state.userId, state.query);
+    const context = await this.memoryManager.getRelevantContext(userId, query);
     
-    return {
-      ...state,
-      context,
-      keywords,
-      analyzedAt: new Date()
-    };
+    return context;
   }
 
-  async routeAgents(state) {
+  async routeAgents(query) {
     console.log('[ORCHESTRATOR] Routing to relevant agents');
     
     const relevantAgents = [];
-    const queryLower = state.query.toLowerCase();
+    const queryLower = query.toLowerCase();
 
     // Determine relevant agents based on query content
     for (const [agentId, agent] of this.agents) {
-      if (agent.isRelevant(state.query)) {
-        const relevanceScore = agent.calculateRelevanceScore(state.query);
+      if (agent.isRelevant(query)) {
+        const relevanceScore = agent.calculateRelevanceScore(query);
         relevantAgents.push({
           agent,
           relevanceScore
@@ -128,20 +160,17 @@ export class LangGraphOrchestrator {
 
     console.log(`[ORCHESTRATOR] Selected ${relevantAgents.length} agents: ${relevantAgents.map(ra => ra.agent.name).join(', ')}`);
 
-    return {
-      ...state,
-      relevantAgents
-    };
+    return relevantAgents;
   }
 
-  async executeAgents(state) {
+  async executeAgents(relevantAgents, query, userId, sessionId, context) {
     console.log('[ORCHESTRATOR] Executing agents in parallel');
     
     const startTime = Date.now();
     
     // Execute all relevant agents in parallel
-    const agentPromises = state.relevantAgents.map(({ agent }) =>
-      agent.execute(state.query, state.userId, state.sessionId, state.context)
+    const agentPromises = relevantAgents.map(({ agent }) =>
+      agent.execute(query, userId, sessionId, context)
     );
 
     try {
@@ -150,31 +179,28 @@ export class LangGraphOrchestrator {
 
       console.log(`[ORCHESTRATOR] All agents completed in ${executionTime}ms`);
 
-      return {
-        ...state,
-        responses,
-        executionTime
-      };
+      return responses;
     } catch (error) {
       console.error('[ORCHESTRATOR] Agent execution error:', error);
       throw error;
     }
   }
 
-  async aggregateResponses(state) {
+  async aggregateResponses(query, userId, sessionId, responses, startTime) {
     console.log('[ORCHESTRATOR] Aggregating responses');
     
     // Sort responses by relevance score
-    const sortedResponses = state.responses.sort((a, b) => b.relevanceScore - a.relevanceScore);
+    const sortedResponses = responses.sort((a, b) => b.relevanceScore - a.relevanceScore);
+    const totalExecutionTime = Date.now() - startTime;
 
     // Create final query result
     const queryResult = {
       queryId: uuidv4(),
-      userId: state.userId,
-      sessionId: state.sessionId,
-      query: state.query,
+      userId: userId,
+      sessionId: sessionId,
+      query: query,
       responses: sortedResponses,
-      totalExecutionTime: state.executionTime,
+      totalExecutionTime: totalExecutionTime,
       timestamp: new Date(),
       agentCount: sortedResponses.length
     };
@@ -184,34 +210,7 @@ export class LangGraphOrchestrator {
 
     console.log(`[ORCHESTRATOR] Query processed successfully with ${sortedResponses.length} responses`);
 
-    return {
-      ...state,
-      queryResult
-    };
-  }
-
-  async processQuery(query, userId, sessionId) {
-    try {
-      console.log(`[ORCHESTRATOR] Processing query for user ${userId}`);
-      
-      const initialState = {
-        query,
-        userId,
-        sessionId,
-        relevantAgents: [],
-        responses: [],
-        context: [],
-        executionTime: 0
-      };
-
-      // Execute the graph
-      const finalState = await this.graph.invoke(initialState);
-      
-      return finalState.queryResult;
-    } catch (error) {
-      console.error('[ORCHESTRATOR] Query processing error:', error);
-      throw error;
-    }
+    return queryResult;
   }
 
   getAgentStats() {

@@ -1,5 +1,4 @@
 import mysql from 'mysql2/promise';
-import redis from 'redis';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -23,30 +22,6 @@ export const createMySQLConnection = async () => {
   }
 };
 
-// Redis Connection (STM)
-export const createRedisConnection = () => {
-  try {
-    const client = redis.createClient({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: process.env.REDIS_PORT || 6379,
-      password: process.env.REDIS_PASSWORD || undefined,
-      db: process.env.REDIS_DB || 0
-    });
-
-    client.on('error', (err) => {
-      console.error('❌ Redis connection error:', err);
-    });
-
-    client.on('connect', () => {
-      console.log('✅ Redis (STM) connected successfully');
-    });
-
-    return client;
-  } catch (error) {
-    console.error('❌ Redis connection failed:', error);
-    throw error;
-  }
-};
 
 // Initialize Database Tables
 export const initializeTables = async (connection) => {
@@ -64,14 +39,31 @@ export const initializeTables = async (connection) => {
       )
     `);
 
+    // Agents table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS agents (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        type VARCHAR(100) NOT NULL,
+        description TEXT,
+        capabilities JSON,
+        keywords JSON,
+        system_prompt TEXT,
+        enabled BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Conversations table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS conversations (
         id VARCHAR(255) PRIMARY KEY,
         user_id VARCHAR(255),
+        session_id VARCHAR(255),
         query TEXT,
         responses JSON,
         total_execution_time INT,
+        agent_count INT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
@@ -86,11 +78,28 @@ export const initializeTables = async (connection) => {
         type ENUM('query', 'response', 'context'),
         content TEXT,
         metadata JSON,
+        agent_id VARCHAR(255),
+        relevance_score FLOAT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
+    // Agent interactions table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS agent_interactions (
+        id VARCHAR(255) PRIMARY KEY,
+        query_id VARCHAR(255),
+        agent_id VARCHAR(255),
+        user_id VARCHAR(255),
+        input_tokens INT,
+        output_tokens INT,
+        execution_time INT,
+        confidence_score FLOAT,
+        relevance_score FLOAT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
     console.log('✅ Database tables initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
