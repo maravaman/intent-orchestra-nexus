@@ -1,4 +1,12 @@
 import winston from 'winston';
+import { mkdirSync } from 'fs';
+
+// Create logs directory if it doesn't exist
+try {
+  mkdirSync('logs', { recursive: true });
+} catch (error) {
+  // Directory already exists or permission error
+}
 
 // Create logger instance
 const logger = winston.createLogger({
@@ -26,14 +34,6 @@ if (process.env.NODE_ENV !== 'production') {
       winston.format.simple()
     )
   }));
-}
-
-// Create logs directory if it doesn't exist
-import { mkdirSync } from 'fs';
-try {
-  mkdirSync('logs', { recursive: true });
-} catch (error) {
-  // Directory already exists or permission error
 }
 
 export default logger;

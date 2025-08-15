@@ -23,6 +23,7 @@ export const rateLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
   message: {
+    success: false,
     error: 'Too many requests from this IP, please try again later.',
     retryAfter: Math.ceil((parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000) / 1000)
   },
@@ -35,6 +36,7 @@ export const queryRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 10, // limit each IP to 10 queries per minute
   message: {
+    success: false,
     error: 'Too many queries from this IP, please slow down.',
     retryAfter: 60
   },
@@ -47,6 +49,7 @@ export const validateRequest = (req, res, next) => {
   // Basic request validation
   if (req.method === 'POST' && !req.body) {
     return res.status(400).json({
+      success: false,
       error: 'Request body is required'
     });
   }
@@ -82,6 +85,7 @@ export const errorHandler = (err, req, res, next) => {
   const isDevelopment = process.env.NODE_ENV === 'development';
 
   res.status(err.status || 500).json({
+    success: false,
     error: err.message || 'Internal server error',
     ...(isDevelopment && { stack: err.stack })
   });
@@ -102,7 +106,8 @@ export const corsOptions = {
     const allowedOrigins = [
       'https://incredible-mooncake-0721fc.netlify.app',
       'http://localhost:3000',
-      'http://localhost:5173'
+      'http://localhost:5173',
+      'http://localhost:8080'
     ];
     
     if (allowedOrigins.includes(origin)) {

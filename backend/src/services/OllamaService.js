@@ -14,6 +14,8 @@ export class OllamaService {
 
   async initialize() {
     try {
+      console.log('🤖 Initializing Ollama service...');
+      
       // Check if Ollama is running
       const models = await this.ollama.list();
       console.log('✅ Ollama service connected successfully');
@@ -24,6 +26,8 @@ export class OllamaService {
         console.log(`📥 Pulling model: ${this.model}`);
         await this.ollama.pull({ model: this.model });
         console.log(`✅ Model ${this.model} pulled successfully`);
+      } else {
+        console.log(`✅ Model ${this.model} is available`);
       }
       
       this.initialized = true;
@@ -31,11 +35,12 @@ export class OllamaService {
     } catch (error) {
       console.error('❌ Ollama service initialization failed:', error);
       console.error('Make sure Ollama is running locally on port 11434');
+      console.error('Run: ollama serve');
       throw error;
     }
   }
 
-  async generateResponse(systemPrompt, userPrompt, context = []) {
+  async generateResponse(systemPrompt, userPrompt, context = [], options = {}) {
     if (!this.initialized) {
       await this.initialize();
     }
@@ -50,9 +55,14 @@ export class OllamaService {
 
       // Add context if available
       if (context.length > 0) {
+        const contextStr = context
+          .slice(-3) // Last 3 context items
+          .map(c => `Previous: ${c.content}`)
+          .join('\n');
+        
         messages.push({
           role: 'system',
-          content: `Previous conversation context: ${JSON.stringify(context.slice(-3))}`
+          content: `Context from previous conversations:\n${contextStr}`
         });
       }
 
@@ -68,9 +78,10 @@ export class OllamaService {
         messages: messages,
         stream: false,
         options: {
-          temperature: 0.7,
-          top_p: 0.9,
-          max_tokens: 1000
+          temperature: options.temperature || 0.7,
+          top_p: options.top_p || 0.9,
+          max_tokens: options.max_tokens || 1000,
+          ...options
         }
       });
 
@@ -81,11 +92,12 @@ export class OllamaService {
         executionTime,
         inputTokens: response.prompt_eval_count || 0,
         outputTokens: response.eval_count || 0,
-        model: this.model
+        model: this.model,
+        totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0)
       };
     } catch (error) {
       console.error('❌ Ollama generation error:', error);
-      throw error;
+      throw new Error(`Ollama generation failed: ${error.message}`);
     }
   }
 
@@ -98,8 +110,7 @@ export class OllamaService {
       
       return response.embedding;
     } catch (error) {
-      console.error('❌ Embedding generation error:', error);
-      // Return null if embedding model is not available
+      console.warn('⚠️ Embedding generation failed, continuing without embeddings:', error.message);
       return null;
     }
   }
@@ -119,5 +130,19 @@ export class OllamaService {
       baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
       initialized: this.initialized
     };
+  }
+
+  async getAvailableModels() {
+    try {
+      const models = await this.ollama.list();
+      return models.models.map(model => ({
+        name: model.name,
+        size: model.size,
+        modified_at: model.modified_at
+      }));
+    } catch (error) {
+      console.error('❌ Failed to get available models:', error);
+      return [];
+    }
   }
 }

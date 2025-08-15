@@ -6,11 +6,12 @@ export class BaseAgent {
     this.name = config.name;
     this.type = config.type;
     this.description = config.description;
-    this.capabilities = config.capabilities;
-    this.keywords = config.keywords;
-    this.priority = config.priority;
-    this.enabled = config.enabled;
+    this.capabilities = config.capabilities || [];
+    this.keywords = config.keywords || [];
+    this.priority = config.priority || 1;
+    this.enabled = config.enabled !== false;
     this.systemPrompt = config.systemPrompt || this.getDefaultSystemPrompt();
+    this.modelConfig = config.modelConfig || {};
     this.memoryManager = memoryManager;
     this.ollama = ollamaService;
   }
@@ -22,7 +23,8 @@ Your capabilities: ${this.capabilities.join(', ')}
 
 Provide helpful, accurate, and detailed responses within your area of expertise.
 Be conversational and engaging while maintaining professionalism.
-If a query is outside your expertise, acknowledge this and provide what relevant information you can.`;
+If a query is outside your expertise, acknowledge this and provide what relevant information you can.
+Always provide specific, actionable information when possible.`;
   }
 
   async execute(query, userId, sessionId, context = []) {
@@ -32,14 +34,15 @@ If a query is outside your expertise, acknowledge this and provide what relevant
       console.log(`[${this.name}] Processing query: "${query}"`);
       
       // Get relevant context from user's memory
-      const relevantContext = await this.memoryManager.getRelevantContext(userId, query);
+      const relevantContext = await this.memoryManager.getRelevantContext(userId, query, 3);
       const combinedContext = [...context, ...relevantContext];
       
-      // Generate response based on agent type
+      // Generate response using Ollama
       const ollamaResponse = await this.ollama.generateResponse(
         this.systemPrompt,
         this.formatQueryWithContext(query, combinedContext),
-        combinedContext
+        combinedContext,
+        this.modelConfig
       );
       
       const executionTime = Date.now() - startTime;
@@ -54,19 +57,33 @@ If a query is outside your expertise, acknowledge this and provide what relevant
         executionTime: executionTime,
         inputTokens: ollamaResponse.inputTokens,
         outputTokens: ollamaResponse.outputTokens,
+        totalTokens: ollamaResponse.totalTokens,
+        model: ollamaResponse.model,
         timestamp: new Date(),
         relevanceScore: relevanceScore
       };
 
-      // Store agent interaction
-      await this.storeAgentInteraction(query, userId, sessionId, ollamaResponse, confidence, relevanceScore);
-      
-      console.log(`[${this.name}] Response generated in ${executionTime}ms`);
+      console.log(`[${this.name}] Response generated in ${executionTime}ms (${ollamaResponse.totalTokens} tokens)`);
       return agentResponse;
       
     } catch (error) {
       console.error(`[${this.name}] Execution error:`, error);
-      throw error;
+      
+      // Return fallback response
+      return {
+        agentId: this.id,
+        agentName: this.name,
+        response: `I apologize, but I encountered an error while processing your query about ${this.type} topics. Please try again or rephrase your question.`,
+        confidence: 0.1,
+        executionTime: Date.now() - startTime,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        model: 'fallback',
+        timestamp: new Date(),
+        relevanceScore: 1,
+        error: error.message
+      };
     }
   }
 
@@ -83,42 +100,26 @@ If a query is outside your expertise, acknowledge this and provide what relevant
     return `Context from previous conversations:
 ${contextStr}
 
-Current query: ${query}`;
+Current query: ${query}
+
+Please provide a comprehensive response that takes into account the user's previous interactions and interests.`;
   }
 
-  async storeAgentInteraction(query, userId, sessionId, ollamaResponse, confidence, relevanceScore) {
-    try {
-      const interaction = {
-        id: `interaction-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        query_id: `query-${Date.now()}`,
-        agent_id: this.id,
-        user_id: userId,
-        input_tokens: ollamaResponse.inputTokens,
-        output_tokens: ollamaResponse.outputTokens,
-        execution_time: ollamaResponse.executionTime,
-        confidence_score: confidence,
-        relevance_score: relevanceScore,
-        timestamp: new Date()
-      };
-
-      await this.memoryManager.mysql.execute(
-        'INSERT INTO agent_interactions (id, query_id, agent_id, user_id, input_tokens, output_tokens, execution_time, confidence_score, relevance_score, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [interaction.id, interaction.query_id, interaction.agent_id, interaction.user_id, interaction.input_tokens, interaction.output_tokens, interaction.execution_time, interaction.confidence_score, interaction.relevance_score, interaction.timestamp]
-      );
-    } catch (error) {
-      console.error(`[${this.name}] Failed to store interaction:`, error);
-    }
-  }
   calculateRelevanceScore(query) {
     const queryLower = query.toLowerCase();
     let score = 0;
     
     // Calculate relevance based on keyword matches
     this.keywords.forEach(keyword => {
-      if (queryLower.includes(keyword)) {
+      if (queryLower.includes(keyword.toLowerCase())) {
         score += 1;
       }
     });
+    
+    // Bonus for exact type match
+    if (queryLower.includes(this.type)) {
+      score += 2;
+    }
     
     // Normalize score to 1-10 range
     return Math.min(Math.max(score, 1), 10);
@@ -131,23 +132,36 @@ Current query: ${query}`;
     // Increase confidence based on keyword matches
     const queryLower = query.toLowerCase();
     const keywordMatches = this.keywords.filter(keyword => 
-      queryLower.includes(keyword)
+      queryLower.includes(keyword.toLowerCase())
     ).length;
     
-    confidence += (keywordMatches * 0.1); // +10% per keyword match
+    confidence += (keywordMatches * 0.05); // +5% per keyword match
     
-    // Ensure confidence is between 0.6 and 1.0
-    return Math.min(Math.max(confidence, 0.6), 1.0);
-  }
-
-  async generateResponse(query, context) {
-    // This method should be overridden by specific agent implementations
-    throw new Error('generateResponse method must be implemented by subclass');
+    // Increase confidence based on response length and detail
+    if (response.length > 200) confidence += 0.1;
+    if (response.length > 500) confidence += 0.1;
+    
+    // Increase confidence if response contains specific information
+    if (response.includes('specific') || response.includes('located') || response.includes('features')) {
+      confidence += 0.1;
+    }
+    
+    // Ensure confidence is between 0.1 and 1.0
+    return Math.min(Math.max(confidence, 0.1), 1.0);
   }
 
   isRelevant(query) {
     const queryLower = query.toLowerCase();
-    return this.keywords.some(keyword => queryLower.includes(keyword));
+    
+    // Check for direct keyword matches
+    const hasKeywordMatch = this.keywords.some(keyword => 
+      queryLower.includes(keyword.toLowerCase())
+    );
+    
+    // Check for type match
+    const hasTypeMatch = queryLower.includes(this.type);
+    
+    return hasKeywordMatch || hasTypeMatch;
   }
 
   getProcessingTime() {
@@ -161,5 +175,18 @@ Current query: ${query}`;
     
     const baseTime = baseTimes[this.type] || 300;
     return baseTime + Math.random() * 200; // Add some randomness
+  }
+
+  getAgentInfo() {
+    return {
+      id: this.id,
+      name: this.name,
+      type: this.type,
+      description: this.description,
+      capabilities: this.capabilities,
+      keywords: this.keywords,
+      priority: this.priority,
+      enabled: this.enabled
+    };
   }
 }
